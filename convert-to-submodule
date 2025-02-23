@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# Check if a folder name was provided
+if [ $# -ne 1 ]; then
+	echo "Usage: $0 <folder_name>"
+	echo "Example: $0 nvim"
+	exit 1
+fi
+
+# Configuration variables
+FOLDER_NAME="$1"
+GITHUB_USERNAME="ChrisGVE"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+TEMP_DIR="/tmp/temp-$FOLDER_NAME"
+
+# Check if the folder exists in the config directory
+if [ ! -d "$CONFIG_DIR/$FOLDER_NAME" ]; then
+	echo "Error: Folder $FOLDER_NAME does not exist in $CONFIG_DIR"
+	exit 1
+fi
+
+# Check if we're in a git repository
+if ! git -C "$CONFIG_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	echo "Error: $CONFIG_DIR is not a git repository"
+	exit 1
+fi
+
+# Clean up any existing submodule configurations
+echo "Cleaning up any existing submodule configurations..."
+cd "$CONFIG_DIR" || exit 1
+if [ -d ".git/modules/$FOLDER_NAME" ]; then
+	rm -rf ".git/modules/$FOLDER_NAME"
+	# Also remove from .gitmodules if it exists
+	if [ -f ".gitmodules" ]; then
+		git config --file=.gitmodules --remove-section "submodule.$FOLDER_NAME" || true
+		rm -f .gitmodules || true
+		git add .gitmodules
+		git commit -m "Clean up old submodule configuration for $FOLDER_NAME" || true
+	fi
+fi
+
+# Create and initialize the new repository
+echo "Creating new repository..."
+rm -rf "$TEMP_DIR"
+mkdir -p "$TEMP_DIR"
+cd "$TEMP_DIR" || exit 1
+git init
+
+# Copy current content
+echo "Copying current content..."
+cp -r "$CONFIG_DIR/$FOLDER_NAME"/* ./ 2>/dev/null || true
+cp -r "$CONFIG_DIR/$FOLDER_NAME"/.[!.]* ./ 2>/dev/null || true # Copy hidden files too
+
+# Initialize the new repository
+git init -b main
+git add .
+git commit -m "Initial commit for $FOLDER_NAME configuration" || true
+
+# Set up the new repository remote and push
+echo "Setting up remote repository..."
+git remote add origin "git@github.com:$GITHUB_USERNAME/config.$FOLDER_NAME.git"
+if ! git push -u origin main; then
+	echo "Error: Failed to push to remote repository"
+	echo "Please make sure the repository 'config.$FOLDER_NAME' exists on GitHub"
+	rm -rf "$TEMP_DIR"
+	exit 1
+fi
+
+# Remove the original folder and handle potential index entries
+cd "$CONFIG_DIR" || exit 1
+echo "Converting to submodule..."
+
+# Try to remove the folder from git and handle potential index entries
+if ! git rm -r "$FOLDER_NAME" 2>/dev/null; then
+	echo "Attempting to clean up git index..."
+	git rm -r --cached "$FOLDER_NAME" 2>/dev/null || true
+fi
+
+# If the folder still exists, move it to backup
+if [ -d "$FOLDER_NAME" ]; then
+	echo "Moving existing folder to ${FOLDER_NAME}_backup for your inspection."
+	mv "$FOLDER_NAME" "${FOLDER_NAME}_backup"
+	echo "Please check ${FOLDER_NAME}_backup for any important untracked files or submodules."
+fi
+
+# Commit the removal
+git commit -m "Remove $FOLDER_NAME directory in preparation for submodule" || true
+
+# Add the new submodule
+if ! git submodule add "git@github.com:$GITHUB_USERNAME/config.$FOLDER_NAME.git" "$FOLDER_NAME"; then
+	echo "Error: Failed to add submodule. Please check the backup folder and try again."
+	exit 1
+fi
+git commit -m "Add $FOLDER_NAME configuration as submodule"
+
+# Clean up
+echo "Cleaning up..."
+rm -rf "$TEMP_DIR"
+
+# Push changes to the main config repository
+echo "Pushing changes to main config repository..."
+cd "$CONFIG_DIR" || exit 1
+git push
+
+echo "Successfully converted $FOLDER_NAME to a submodule!"
+echo "New repository: https://github.com/$GITHUB_USERNAME/config.$FOLDER_NAME"

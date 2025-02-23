@@ -1,0 +1,123 @@
+#!/bin/bash
+
+# Script to recursively collect files from a given parent folder and generate a Markdown file.
+# The Markdown file will structure folders using headings and include files with their paths
+# and contents enclosed in Markdown code blocks.
+#
+# Usage:
+#   ./script.sh <extension1> <extension2> ... [-<excluded_filename>] [+<included_filename>]
+#
+# Parameters:
+#   - List of file extensions to include (mandatory unless + option is used)
+#   - Files to explicitly exclude (prefix with -) (can be full path or filename)
+#   - Files to explicitly include (prefix with +) (can be full path or filename)
+#
+# Example:
+#   ./script.sh txt md -secret.txt +important.md
+#
+# Output:
+#   A Markdown file named after the parent folder will be created, containing structured content.
+
+# Exit on error
+set -e
+
+# Display usage information if no arguments are provided
+if [ "$#" -eq 0 ]; then
+	echo "Usage: $0 <extensions> [-exclude] [+include]"
+	exit 1
+fi
+
+# Extract the parent folder name
+PARENT_FOLDER=$(basename "$PWD")
+OUTPUT_FILE="${PARENT_FOLDER}.md"
+
+# Arrays to store included and excluded files
+EXTENSIONS=()
+INCLUDE_FILES=()
+EXCLUDE_FILES=()
+INCLUDE_MODE=false
+
+# Parse arguments
+for arg in "$@"; do
+	if [[ "$arg" == -* ]]; then
+		EXCLUDE_FILES+=("${arg:1}") # Remove '-' and store filename or path
+	elif [[ "$arg" == +* ]]; then
+		INCLUDE_FILES+=("${arg:1}") # Remove '+' and store filename or path
+		INCLUDE_MODE=true
+	else
+		EXTENSIONS+=("$arg")
+	fi
+done
+
+# Function to check if a file matches any pattern in an array
+matches_any() {
+	local file="$1"
+	shift
+	for pattern in "$@"; do
+		if [[ "$file" == *"$pattern"* ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Function to process directories recursively
+process_directory() {
+	local dir="$1"
+	local depth="$2"
+	local files_found=false
+	local relative_dir="${dir#$PWD/}"
+	relative_dir="${PARENT_FOLDER}/${relative_dir}"
+
+	# Ensure relative_dir is correctly formatted
+	if [ "$relative_dir" == "$PARENT_FOLDER/" ]; then
+		relative_dir="$PARENT_FOLDER"
+	fi
+
+	# Process files in the directory
+	for file in "$dir"/*; do
+		if [ -f "$file" ]; then
+			local filename=$(basename "$file")
+			local relpath="${PARENT_FOLDER}/${file#$PWD/}"
+			local extension="${file##*.}"
+
+			# Check if the file should be processed
+			if matches_any "$relpath" "${EXCLUDE_FILES[@]}"; then
+				continue
+			fi
+			if ((${#INCLUDE_FILES[@]} > 0)) && ! matches_any "$relpath" "${INCLUDE_FILES[@]}"; then
+				continue
+			fi
+			if (! $INCLUDE_MODE) && ! [[ " ${EXTENSIONS[*]} " == *" $extension "* ]]; then
+				continue
+			fi
+
+			# Print directory heading only if a file exists in the section
+			if [ "$files_found" = false ]; then
+				echo "# ${relative_dir}" >>"$OUTPUT_FILE"
+				files_found=true
+			fi
+
+			# Append file information to the Markdown file
+			echo "${relpath}" >>"$OUTPUT_FILE"
+			echo "\`\`\`${extension}" >>"$OUTPUT_FILE"
+			cat "$file" >>"$OUTPUT_FILE"
+			echo "\`\`\`" >>"$OUTPUT_FILE"
+			echo "" >>"$OUTPUT_FILE"
+		fi
+	done
+
+	# Process subdirectories recursively
+	for subdir in "$dir"/*/; do
+		if [ -d "$subdir" ]; then
+			process_directory "$subdir" $((depth + 1))
+		fi
+	done
+}
+
+# Start processing from the current directory
+>"$OUTPUT_FILE" # Clear previous output
+process_directory "$PWD" 1
+
+# Completion message
+echo "Markdown file generated: $OUTPUT_FILE"

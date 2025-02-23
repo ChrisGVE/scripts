@@ -1,0 +1,15 @@
+#!/bin/zsh
+configs=(telescope fzf)
+
+if [[ ! ${configs[(ie)$1]} -le ${#configs} ]]; then
+    echo "Usage: nvim-switch <config>"
+    echo "Available: ${configs[@]}"
+    exit 1
+fi
+
+export NVIM_APPNAME="nvim-$1"
+export XDG_DATA_HOME="$HOME/.local/share/nvim-$1"
+export XDG_STATE_HOME="$HOME/.local/state/nvim-$1"
+export XDG_CACHE_HOME="$HOME/.cache/nvim-$1"
+
+exec nvim "${@:2}"

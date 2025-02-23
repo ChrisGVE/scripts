@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# Script to create symlinks in a target folder for each file in the source folder.
+# The symlinks will use absolute paths (no shortcuts like ~) and will overwrite existing links.
+#
+# Usage:
+#   ./script.sh <source_folder> <target_folder>
+#
+# Parameters:
+#   - source_folder: The folder containing the files to be linked.
+#   - target_folder: The folder where the symlinks will be created.
+#
+# Example:
+#   ./script.sh /path/to/source /path/to/target
+
+# Exit on error
+set -e
+
+# Check if correct number of arguments is provided
+if [ "$#" -ne 2 ]; then
+	echo "Usage: $0 <source_folder> <target_folder>"
+	exit 1
+fi
+
+# Resolve absolute paths
+SOURCE_FOLDER=$(realpath "$1")
+TARGET_FOLDER=$(realpath "$2")
+
+# Ensure source folder exists
+if [ ! -d "$SOURCE_FOLDER" ]; then
+	echo "Error: Source folder does not exist."
+	exit 1
+fi
+
+# Ensure target folder exists, create it if necessary
+mkdir -p "$TARGET_FOLDER"
+
+# Iterate over files in the source folder
+for file in "$SOURCE_FOLDER"/*; do
+	if [ -f "$file" ]; then
+		ln -sf "$file" "$TARGET_FOLDER/$(basename "$file")"
+	fi
+done
+
+# Completion message
+echo "Symlinks created in $TARGET_FOLDER for all files in $SOURCE_FOLDER."

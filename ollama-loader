@@ -1,0 +1,66 @@
+#!/bin/bash
+
+print_usage() {
+	echo "Usage: $0 model1\\[postfix1,postfix2\\] model2 ..."
+	echo "Example: $0 qwen2.5-coder:0.5b-instruct\\[q6_K,fp16,q8_0\\]"
+	echo ""
+	echo "Note: Either escape the square brackets with backslash or quote the entire argument:"
+	echo "  $0 \"qwen2.5-coder:0.5b-instruct[q6_K,fp16,q8_0]\""
+}
+
+# Function to download a single model
+download_model() {
+	local model=$1
+	echo "Starting download of $model..."
+	if ! ollama pull "$model" 2>/tmp/ollama_error_$$.log; then
+		echo "Error downloading $model:"
+		cat /tmp/ollama_error_$$.log
+		rm /tmp/ollama_error_$$.log
+		return 1
+	fi
+	rm -f /tmp/ollama_error_$$.log
+	echo "Successfully downloaded $model"
+	return 0
+}
+
+# Function to process a single model specification
+process_model() {
+	local model_spec=$1
+	local base_name postfixes
+
+	# Remove any escaping of square brackets
+	model_spec=${model_spec//\\/}
+
+	# Check if model has postfixes specified
+	if [[ $model_spec =~ (.*)\[(.*)\] ]]; then
+		base_name="${BASH_REMATCH[1]}"
+		# Split postfixes on comma
+		IFS=',' read -ra postfixes <<<"${BASH_REMATCH[2]}"
+
+		# Download each variant
+		for postfix in "${postfixes[@]}"; do
+			# Trim whitespace
+			postfix=$(echo "$postfix" | tr -d '[:space:]')
+			download_model "${base_name}-${postfix}" &
+		done
+	else
+		# No postfixes, download base model
+		download_model "$model_spec" &
+	fi
+}
+
+# Main script
+if [ $# -eq 0 ]; then
+	print_usage
+	exit 1
+fi
+
+# Process each model specification
+for model_spec in "$@"; do
+	process_model "$model_spec"
+done
+
+# Wait for all background processes to complete
+wait
+
+echo "All downloads completed!"
