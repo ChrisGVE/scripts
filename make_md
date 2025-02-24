@@ -37,22 +37,6 @@ INCLUDE_FILES=()
 EXCLUDE_FILES=()
 INCLUDE_MODE=false
 
-# Common extension mappings for syntax highlighting
-declare -A EXTENSION_MAP=(
-	[md]=markdown
-	[r]=r
-	[rs]=rust
-	[py]=python
-	[sh]=bash
-	[zsh]=zsh
-	[js]=javascript
-	[ts]=typescript
-	[c]=c
-	[cpp]=cpp
-	[java]=java
-	[go]=go
-)
-
 # Parse arguments
 for arg in "$@"; do
 	if [[ "$arg" == -* ]]; then
@@ -85,26 +69,35 @@ get_syntax() {
 	local file="$1"
 	local extension="${file##*.}"
 
-	# Check if extension is mapped
-	if [[ -n "${EXTENSION_MAP[$extension]}" ]]; then
-		echo "${EXTENSION_MAP[$extension]}"
-		return
-	fi
-
-	# Handle extension-less files by checking for shebang
-	if [[ ! "$file" =~ \..+$ ]]; then
-		local shebang_line=$(head -n 1 "$file" 2>/dev/null)
-		case "$shebang_line" in
-		"#!/bin/bash"*) echo "bash" ;;
-		"#!/bin/sh"*) echo "sh" ;;
-		"#!/usr/bin/env python"*) echo "python" ;;
-		"#!/usr/bin/env zsh"*) echo "zsh" ;;
-		*) echo "plaintext" ;;
-		esac
-		return
-	fi
-
-	echo "$extension"
+	case "$extension" in
+	md) echo "markdown" ;;
+	r) echo "r" ;;
+	rs) echo "rust" ;;
+	py) echo "python" ;;
+	sh) echo "bash" ;;
+	zsh) echo "zsh" ;;
+	js) echo "javascript" ;;
+	ts) echo "typescript" ;;
+	c) echo "c" ;;
+	cpp) echo "cpp" ;;
+	java) echo "java" ;;
+	go) echo "go" ;;
+	*)
+		# Handle extension-less files by checking for shebang
+		if [[ ! "$file" =~ \..+$ ]]; then
+			local shebang_line=$(head -n 1 "$file" 2>/dev/null)
+			case "$shebang_line" in
+			"#!/bin/bash"*) echo "bash" ;;
+			"#!/bin/sh"*) echo "sh" ;;
+			"#!/usr/bin/env python"*) echo "python" ;;
+			"#!/usr/bin/env zsh"*) echo "zsh" ;;
+			*) echo "plaintext" ;;
+			esac
+		else
+			echo "$extension"
+		fi
+		;;
+	esac
 }
 
 # Function to process directories recursively
