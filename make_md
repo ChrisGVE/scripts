@@ -1,24 +1,4 @@
 #!/bin/bash
-
-# Script to recursively collect files from a given parent folder and generate a Markdown file.
-# The Markdown file will structure folders using headings and include files with their paths
-# and contents enclosed in Markdown code blocks.
-#
-# Usage:
-#   ./script.sh <extension1> <extension2> ... [-<excluded_filename>] [+<included_filename>]
-#
-# Parameters:
-#   - List of file extensions to include (mandatory unless + option is used)
-#   - Files to explicitly exclude (prefix with -) (can be full path or filename)
-#   - Files to explicitly include (prefix with +) (can be full path or filename)
-#
-# Example:
-#   ./script.sh txt md -secret.txt +important.md
-#
-# Output:
-#   A Markdown file named after the parent folder will be created, containing structured content.
-
-# Exit on error
 set -e
 
 # Display usage information if no arguments are provided
@@ -27,124 +7,258 @@ if [ "$#" -eq 0 ]; then
 	exit 1
 fi
 
-# Extract the parent folder name
+# Extract the parent folder name and define the output file
 PARENT_FOLDER=$(basename "$PWD")
 OUTPUT_FILE="${PARENT_FOLDER}.md"
 
-# Arrays to store included and excluded files
+# Arrays to store extensions, included and excluded files
 EXTENSIONS=()
 INCLUDE_FILES=()
 EXCLUDE_FILES=()
 INCLUDE_MODE=false
 
+# Array to track processed files (simulate associative array)
+PROCESSED_FILES=()
+
 # Parse arguments
 for arg in "$@"; do
 	if [[ "$arg" == -* ]]; then
-		EXCLUDE_FILES+=("${arg:1}") # Remove '-' and store filename or path
+		EXCLUDE_FILES+=("${arg:1}") # Remove '-' and store filename/path or pattern
 	elif [[ "$arg" == +* ]]; then
-		INCLUDE_FILES+=("${arg:1}") # Remove '+' and store filename or path
+		INCLUDE_FILES+=("${arg:1}") # Remove '+' and store filename/path or pattern
 		INCLUDE_MODE=true
 	else
 		EXTENSIONS+=("$arg")
 	fi
 done
 
-# Ensure the output file does not get included in the processing
+# Ensure the output file is excluded from processing
 EXCLUDE_FILES+=("$OUTPUT_FILE")
 
-# Function to check if a file matches any pattern in an array
+# Function: checks if a file or path matches any pattern in the provided list
 matches_any() {
 	local file="$1"
 	shift
 	for pattern in "$@"; do
-		if [[ "$file" == "$pattern" ]]; then
+		if [[ "$file" == $pattern ]]; then
 			return 0
 		fi
 	done
 	return 1
 }
 
-# Function to determine the appropriate syntax highlighting
-get_syntax() {
+# Function: check if file is already processed (using a regular array)
+is_processed() {
 	local file="$1"
-	local extension="${file##*.}"
-	case "$extension" in
-	md) echo "markdown" ;;
-	r) echo "r" ;;
-	rs) echo "rust" ;;
-	py) echo "python" ;;
-	sh) echo "bash" ;;
-	zsh) echo "zsh" ;;
-	js) echo "javascript" ;;
-	ts) echo "typescript" ;;
-	c) echo "c" ;;
-	cpp) echo "cpp" ;;
-	java) echo "java" ;;
-	go) echo "go" ;;
-	*) echo "plaintext" ;;
-	esac
+	for processed in "${PROCESSED_FILES[@]}"; do
+		if [[ "$processed" == "$file" ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
-# Function to process directories recursively
+# Function: marks a file as processed
+mark_processed() {
+	local file="$1"
+	PROCESSED_FILES+=("$file")
+}
+
+# Function: determines syntax highlighting based on file extension or shebang.
+# Now explicitly handles zsh shebangs invoked via both /usr/bin/env and /usr/bin.
+get_syntax() {
+	local file="$1"
+	local shebang
+	shebang=$(head -n 1 "$file" 2>/dev/null)
+
+	# If the file has an extension and we want to honor it, we could check that here.
+	# But if a valid shebang exists, we'll use it to override.
+	if [[ "$shebang" =~ ^#! ]]; then
+		# Remove the "#!" and trim leading/trailing spaces
+		local cmd_line="${shebang:2}"
+		cmd_line=$(echo "$cmd_line")
+		# Tokenize the command line into words
+		read -r -a tokens <<<"$cmd_line"
+		if [ ${#tokens[@]} -ge 2 ]; then
+			# In cases like '#!/usr/bin/env python', use the second token.
+			echo "$(basename "${tokens[1]}")"
+		elif [ ${#tokens[@]} -eq 1 ]; then
+			# Otherwise, use the only token (e.g. '#!/bin/bash')
+			echo "$(basename "${tokens[0]}")"
+		else
+			echo "plaintext"
+		fi
+	else
+		# Fall back to extension mapping if no shebang is found.
+		local extension="${file##*.}"
+		case "$extension" in
+		md) echo "markdown" ;;
+		r) echo "r" ;;
+		rs) echo "rust" ;;
+		py) echo "python" ;;
+		sh) echo "bash" ;;
+		zsh) echo "zsh" ;;
+		js) echo "javascript" ;;
+		ts) echo "typescript" ;;
+		c) echo "c" ;;
+		cpp) echo "cpp" ;;
+		java) echo "java" ;;
+		go) echo "go" ;;
+		*) echo "plaintext" ;;
+		esac
+	fi
+}
+
+# Function: processes a single file (used for inclusions not caught in recursion)
+process_single_file() {
+	local file="$1"
+	if [ ! -f "$file" ]; then
+		return
+	fi
+	local abs_file
+	abs_file=$(readlink -f "$file")
+	local relpath
+	if [[ "$abs_file" == "$PWD"* ]]; then
+		relpath="$PARENT_FOLDER/${abs_file#$PWD/}"
+	else
+		relpath=$(echo "$abs_file" | sed "s|^$HOME|~|")
+	fi
+
+	# Skip if already processed
+	if is_processed "$relpath"; then
+		return
+	fi
+
+	local file_dir
+	file_dir=$(dirname "$relpath")
+	local header
+	if [ "$file_dir" = "$PARENT_FOLDER" ]; then
+		header="# $PARENT_FOLDER"
+	else
+		local level
+		level=$(echo "$file_dir" | awk -F'/' '{print NF}')
+		header="$(printf '%0.s#' $(seq 1 $level)) $file_dir"
+	fi
+
+	{
+		echo ""
+		echo "$header"
+		echo ""
+		echo "$relpath"
+		echo ""
+		echo "\`\`\`$(get_syntax "$file")"
+		cat "$file"
+		echo "\`\`\`"
+		echo ""
+	} >>"$OUTPUT_FILE"
+	mark_processed "$relpath"
+}
+
+# Function: recursively processes directories and appends output to the Markdown file
 process_directory() {
 	local dir="$1"
-	local depth="$2"
-	local files_found=false
-	local relative_dir="${dir#$PWD/}"
+
+	# Skip directory if its basename matches any exclusion pattern
+	local current_dir
+	current_dir=$(basename "$dir")
+	if matches_any "$current_dir" "${EXCLUDE_FILES[@]}"; then
+		return
+	fi
+
+	local relative_dir
+	if [ "$dir" = "$PWD" ]; then
+		relative_dir="$PARENT_FOLDER"
+	else
+		relative_dir="${dir#$PWD/}"
+		relative_dir="$PARENT_FOLDER/$relative_dir"
+	fi
 	relative_dir="${relative_dir%/}"
 
-	if [[ "$relative_dir" == "" || "$relative_dir" == "$PARENT_FOLDER" ]]; then
-		relative_dir="# $PARENT_FOLDER"
-	else
-		relative_dir="$(echo "$relative_dir" | sed "s|[^/]*/|# |g")"
-	fi
+	local level
+	level=$(echo "$relative_dir" | awk -F'/' '{print NF}')
+	local header
+	header=$(printf '%0.s#' $(seq 1 $level))
+	header="$header $relative_dir"
 
 	local dir_printed=false
 
-	# Process files in the directory
+	# Process files in the current directory
 	for file in "$dir"/*; do
 		if [ -f "$file" ]; then
-			local filename=$(basename "$file")
-			local relpath="${file#$PWD/}"
-			local syntax=$(get_syntax "$file")
+			local filename
+			filename=$(basename "$file")
+			local relpath
+			if [ "$dir" = "$PWD" ]; then
+				relpath="$PARENT_FOLDER/$filename"
+			else
+				relpath="$relative_dir/$filename"
+			fi
+			relpath="${relpath//\/\//\/}"
 
-			# Ensure exact file matching
-			if matches_any "$filename" "${EXCLUDE_FILES[@]}"; then
-				continue
-			fi
-			if ((${#INCLUDE_FILES[@]} > 0)) && ! matches_any "$filename" "${INCLUDE_FILES[@]}"; then
-				continue
-			fi
-			if (! $INCLUDE_MODE) && ! [[ " ${EXTENSIONS[*]} " == *" ${file##*.} "* ]]; then
+			# Skip if the file (or its relative path) is in the exclusion list
+			if matches_any "$filename" "${EXCLUDE_FILES[@]}" || matches_any "$relpath" "${EXCLUDE_FILES[@]}"; then
 				continue
 			fi
 
-			# Print directory heading only if a file exists in the section
+			# Process file if it matches an explicit inclusion OR if its extension is allowed.
+			if matches_any "$filename" "${INCLUDE_FILES[@]}" || matches_any "$relpath" "${INCLUDE_FILES[@]}"; then
+				: # explicit inclusion, process below
+			elif [[ " ${EXTENSIONS[*]} " == *" ${file##*.} "* ]]; then
+				: # allowed extension, process below
+			else
+				continue
+			fi
+
+			# Skip if already processed
+			if is_processed "$relpath"; then
+				continue
+			fi
+			mark_processed "$relpath"
+
+			# Print the directory header once if at least one file is processed here
 			if [ "$dir_printed" = false ]; then
-				echo "$relative_dir" >>"$OUTPUT_FILE"
+				{
+					echo ""
+					echo "$header"
+					echo ""
+				} >>"$OUTPUT_FILE"
 				dir_printed=true
 			fi
 
-			# Append file information to the Markdown file
-			echo "${relpath}" >>"$OUTPUT_FILE"
-			echo "\`\`\`${syntax}" >>"$OUTPUT_FILE"
-			cat "$file" >>"$OUTPUT_FILE"
-			echo "\`\`\`" >>"$OUTPUT_FILE"
-			echo "" >>"$OUTPUT_FILE"
+			{
+				echo "$relpath"
+				echo ""
+				echo "\`\`\`$(get_syntax "$file")"
+				cat "$file"
+				echo "\`\`\`"
+				echo ""
+			} >>"$OUTPUT_FILE"
 		fi
 	done
 
-	# Process subdirectories recursively
+	# Recursively process subdirectories
 	for subdir in "$dir"/*/; do
 		if [ -d "$subdir" ]; then
-			process_directory "$subdir" $((depth + 1))
+			process_directory "$subdir"
 		fi
 	done
 }
 
-# Start processing from the current directory
->"$OUTPUT_FILE" # Clear previous output
-process_directory "$PWD" 1
+# Clear previous output
+>"$OUTPUT_FILE"
 
-# Completion message
+# Process the entire directory tree starting from the current directory
+process_directory "$PWD"
+
+# After recursion, process any include files not already added
+if [ ${#INCLUDE_FILES[@]} -gt 0 ]; then
+	for inc in "${INCLUDE_FILES[@]}"; do
+		if [ -f "$inc" ]; then
+			process_single_file "$inc"
+		elif [ -f "$PWD/$inc" ]; then
+			process_single_file "$PWD/$inc"
+		fi
+	done
+fi
+
 echo "Markdown file generated: $OUTPUT_FILE"
