@@ -57,7 +57,7 @@ matches_any() {
 	local file="$1"
 	shift
 	for pattern in "$@"; do
-		if [[ "$file" == *"$pattern"* ]]; then
+		if [[ "$file" == "$pattern" ]]; then
 			return 0
 		fi
 	done
@@ -68,7 +68,6 @@ matches_any() {
 get_syntax() {
 	local file="$1"
 	local extension="${file##*.}"
-
 	case "$extension" in
 	md) echo "markdown" ;;
 	r) echo "r" ;;
@@ -82,21 +81,7 @@ get_syntax() {
 	cpp) echo "cpp" ;;
 	java) echo "java" ;;
 	go) echo "go" ;;
-	*)
-		# Handle extension-less files by checking for shebang
-		if [[ ! "$file" =~ \..+$ ]]; then
-			local shebang_line=$(head -n 1 "$file" 2>/dev/null)
-			case "$shebang_line" in
-			"#!/bin/bash"*) echo "bash" ;;
-			"#!/bin/sh"*) echo "sh" ;;
-			"#!/usr/bin/env python"*) echo "python" ;;
-			"#!/usr/bin/env zsh"*) echo "zsh" ;;
-			*) echo "plaintext" ;;
-			esac
-		else
-			echo "$extension"
-		fi
-		;;
+	*) echo "plaintext" ;;
 	esac
 }
 
@@ -106,25 +91,28 @@ process_directory() {
 	local depth="$2"
 	local files_found=false
 	local relative_dir="${dir#$PWD/}"
-	relative_dir="${PARENT_FOLDER}/${relative_dir}"
+	relative_dir="${relative_dir%/}"
 
-	# Ensure relative_dir is correctly formatted
-	if [ "$relative_dir" == "$PARENT_FOLDER/" ]; then
-		relative_dir="$PARENT_FOLDER"
+	if [[ "$relative_dir" == "" || "$relative_dir" == "$PARENT_FOLDER" ]]; then
+		relative_dir="# $PARENT_FOLDER"
+	else
+		relative_dir="$(echo "$relative_dir" | sed "s|[^/]*/|# |g")"
 	fi
+
+	local dir_printed=false
 
 	# Process files in the directory
 	for file in "$dir"/*; do
 		if [ -f "$file" ]; then
 			local filename=$(basename "$file")
-			local relpath="${PARENT_FOLDER}/${file#$PWD/}"
+			local relpath="${file#$PWD/}"
 			local syntax=$(get_syntax "$file")
 
-			# Check if the file should be processed
-			if matches_any "$relpath" "${EXCLUDE_FILES[@]}"; then
+			# Ensure exact file matching
+			if matches_any "$filename" "${EXCLUDE_FILES[@]}"; then
 				continue
 			fi
-			if ((${#INCLUDE_FILES[@]} > 0)) && ! matches_any "$file" "${INCLUDE_FILES[@]}"; then
+			if ((${#INCLUDE_FILES[@]} > 0)) && ! matches_any "$filename" "${INCLUDE_FILES[@]}"; then
 				continue
 			fi
 			if (! $INCLUDE_MODE) && ! [[ " ${EXTENSIONS[*]} " == *" ${file##*.} "* ]]; then
@@ -132,9 +120,9 @@ process_directory() {
 			fi
 
 			# Print directory heading only if a file exists in the section
-			if [ "$files_found" = false ]; then
-				echo "# ${relative_dir}" >>"$OUTPUT_FILE"
-				files_found=true
+			if [ "$dir_printed" = false ]; then
+				echo "$relative_dir" >>"$OUTPUT_FILE"
+				dir_printed=true
 			fi
 
 			# Append file information to the Markdown file
